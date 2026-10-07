@@ -1,2 +1,2 @@
 [functions.student-account]
-verify_jwt = false
+verify_jwt = true

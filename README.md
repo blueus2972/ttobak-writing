@@ -23,15 +23,15 @@
    insert into ttobak_private.teacher_allowlist(email)
    values(lower('teacher@example.com')) on conflict do nothing;
    ```
-4. Authentication의 Email/Password와 교사 이메일 인증을 활성화합니다. 신규 학생 가입은 Edge Function이 Auth 관리 API로 처리하므로 학생 이메일 인증이나 익명 로그인은 필요하지 않습니다. 기존 익명 학생이 있다면 그 계정을 없애지 않습니다.
+4. Authentication의 Email/Password와 교사 이메일 인증을 활성화합니다. 신규 학생 가입은 Edge Function이 Auth 관리 API로 처리하므로 학생 이메일 인증은 필요하지 않습니다. Anonymous Sign-Ins도 켜 둡니다. 학생 이름·비밀번호를 확인하기 전에 임시 인증 세션을 만들며, 성공 후 정식 학생 계정 세션으로 바꿉니다. 기존 익명 학생이 있다면 그 계정을 없애지 않습니다.
 5. Edge Function `student-account`를 배포합니다.
    ```sh
-   supabase functions deploy student-account --project-ref YOUR_PROJECT_ID --no-verify-jwt
+   supabase functions deploy student-account --project-ref YOUR_PROJECT_ID 
    ```
-   또는 Supabase 대시보드 Edge Functions에서 `supabase/functions/student-account/index.ts` 내용으로 같은 이름의 함수를 배포하고 이 함수의 Verify JWT만 끕니다. 로그인 전 사용하는 공개 인증 엔드포인트이며, 함수 안에서 이름·비밀번호를 검증하고 DB 기반 요청 횟수를 제한합니다. 다른 함수의 JWT 검증은 끄지 않습니다.
+   또는 Supabase 대시보드 Edge Functions에서 `supabase/functions/student-account/index.ts` 내용으로 같은 이름의 함수를 배포하고 이 함수의 Verify JWT를 켜 둡니다. 프런트엔드가 먼저 임시 인증 세션을 만든 뒤 호출하며, 함수 안에서 이름·비밀번호를 검증하고 DB 기반 요청 횟수를 제한합니다.
 6. 함수 Secret `WRITING_ALLOWED_ORIGINS`를 실제 Vercel 사이트 Origin으로 설정합니다. 여러 주소는 쉼표로 구분합니다. 함수의 기본 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`는 Supabase 제공 서버 환경 변수를 사용합니다. 관리자 키를 브라우저·GitHub·Vercel 정적 환경 변수에 넣지 않습니다.
 7. 교사 가입 확인 링크를 위해 Site URL/Redirect URLs에 Vercel 주소를 등록합니다.
-8. Vercel에 공개 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 등록합니다. 기존 공개 anon 키는 `SUPABASE_ANON_KEY`로 사용할 수 있습니다. 최신 커밋으로 재배포합니다.
+8. 현재 프로젝트 공개 연결 정보는 `supabase-public.json`에 반영되어 있습니다. 다른 프로젝트를 연결할 때는 Vercel에 공개 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 등록해 덮어쓸 수 있습니다. 기존 공개 anon 키는 `SUPABASE_ANON_KEY`로 사용할 수 있습니다. 최신 커밋으로 재배포합니다.
 9. 테스트 학급에서 학생 최초 가입→나가기→다른 기기에서 이름·비밀번호 로그인→제출→교사 피드백→학생 확인을 검증합니다.
 
 URL·공개 키만으로는 스키마와 서버 함수를 배포할 수 없습니다. Supabase 프로젝트 운영자 권한으로 위 설정을 한 번 수행해야 합니다. 연결 전에도 연습장·PNG 저장은 동작합니다.
@@ -68,3 +68,4 @@ SQL 테스트는 PGlite 모의 Auth/Storage 환경에서 RLS·서버 전용 RPC�
 문장 반복, 첫 줄 견본, 흐려지는 따라쓰기, 줄 번호, 십자·점선·미자·네모·4선·밑줄·빈 종이, 서체·종이 색·장식·이미지, A4 세로/가로, 펜·지우개·되돌리기를 지원합니다. 인쇄는 A4, 100%, 여백 없음, 머리글/바닥글 끄기를 권장합니다.
 
 서체는 Google Fonts에서 로드합니다. 설정만 로컬 저장되며 펜 입력·삽입 이미지는 새로고침 후 유지되지 않습니다. 설정 변경 시 펜 입력이 지워집니다. 먼저 저장하거나 제출하세요. AI 글씨 교정은 포함하지 않습니다.
+
