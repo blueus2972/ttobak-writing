@@ -1,6 +1,7 @@
 import {client,assertConfigured,checked,currentStudent,submitImages,signedImage,escapeHtml as e} from './cloud-client.js';
+import {studentPasswordAuth} from './student-auth.js';
 const $=id=>document.getElementById(id),teacher=document.body.dataset.portal==='teacher';
-let user=null,student=null,classes=[],students=[],submissions=[],selectedClass=null,reviewId=null,viewVersion=0,editingStudent=null;
+let user=null,student=null,classes=[],students=[],submissions=[],selectedClass=null,reviewId=null,viewVersion=0,editingStudent=null,authMode='register';
 const status=message=>{$('status').textContent=message;};
 function errorText(error){if(error.message?.includes('duplicate key'))return '이미 사용 중인 번호입니다. 다른 번호를 골라 주세요.';return error.message||'처리하지 못했어요. 다시 시도해 주세요.';}
 async function task(button,fn){if(button)button.disabled=true;status('');try{await fn()}catch(error){status(errorText(error))}finally{if(button)button.disabled=false}}
@@ -15,9 +16,10 @@ async function initialize(){
  $('teacherAuth').hidden=true;$('dashboard').hidden=false;$('logout').hidden=false;await loadClasses();
  }else if(user?.is_anonymous){$('logout').hidden=false;status('학생으로 입장 중입니다. 교사 계정을 사용하려면 먼저 로그아웃해 주세요.');}
  }else{
- if(user&&!user.is_anonymous){$('logout').hidden=false;status('교사로 로그인 중입니다. 학생 입장 전에 나가기를 눌러 주세요.');return;}
+ if(user&&!user.is_anonymous&&await checked(client.rpc('writing_is_teacher'))){$('logout').hidden=false;status('교사로 로그인 중입니다. 학생 입장 전에 나가기를 눌러 주세요.');return;}
  student=user?await currentStudent():null;
  if(student){$('studentAuth').hidden=true;$('studentHome').hidden=false;$('logout').hidden=false;$('studentGreeting').textContent=`${student.name} 학생, 반가워요.`;$('studentClass').textContent=`${student.classroom.name} · ${student.number}번`;await loadMine();}
+ else if(user){$('logout').hidden=false;status('학생 정보가 없거나 입장이 중지되어 있습니다. 선생님께 문의하거나 나가기를 누르고 다시 로그인해 주세요.');}
  }
 }
 async function loadClasses(preferred){
@@ -27,22 +29,19 @@ async function loadClasses(preferred){
 }
 async function loadClass(){
  const version=++viewVersion;if(!selectedClass){students=[];submissions=[];drawClass();return;}
- $('classCode').textContent=`학급 코드: ${selectedClass.code} · 학생에게 개인 입장 코드와 함께 전달하세요.`;
- const [roster,work]=await Promise.all([checked(client.from('writing_students').select('*').eq('class_id',selectedClass.id).order('number')),checked(client.from('writing_submissions').select('*,writing_students!inner(id,name,number,class_id)').eq('writing_students.class_id',selectedClass.id).order('created_at',{ascending:false}))]);
- if(version!==viewVersion)return;students=roster;submissions=work;drawClass();
+ $('classCode').textContent=`학급 코드: ${selectedClass.code} · 학생이 처음 이름과 비밀번호를 등록할 때만 사용합니다.`;
+ const [roster,work,accounts]=await Promise.all([checked(client.from('writing_students').select('*').eq('class_id',selectedClass.id).order('number')),checked(client.from('writing_submissions').select('*,writing_students!inner(id,name,number,class_id)').eq('writing_students.class_id',selectedClass.id).order('created_at',{ascending:false})),checked(client.rpc('writing_student_logins',{class_key:selectedClass.id}))]);
+ if(version!==viewVersion)return;students=roster.map(s=>({...s,login_name:accounts.find(a=>a.student_id===s.id)?.login_name}));submissions=work;drawClass();
 }
 function drawClass(){
  if(!selectedClass)$('classCode').textContent='학급을 만들고 학생을 등록해 주세요.';
  $('studentCount').textContent=students.filter(s=>s.active).length;$('submissionCount').textContent=submissions.length;$('pendingCount').textContent=submissions.filter(s=>!s.reviewed_at).length;
- $('studentNumber').value=students.length?Math.min(999,Math.max(...students.map(s=>s.number))+1):1;
- $('roster').innerHTML=students.length?`<table><thead><tr><th>번호·이름</th><th>제출</th><th>입장 관리</th></tr></thead><tbody>${students.map(s=>`<tr><td><b>${s.number}번 ${e(s.name)}</b>${s.active?'':'<small>입장 중지</small>'}</td><td>${submissions.filter(w=>w.student_id===s.id).length}건</td><td><button data-edit="${s.id}">정보 수정</button><button data-code="${s.id}">${s.active?'코드 재발급':'입장 재개'}</button>${s.active?`<button data-disable="${s.id}">중지</button>`:''}</td></tr>`).join('')}</tbody></table>`:'<p class="empty">첫 학생을 추가해 주세요.</p>';
- $('roster').querySelectorAll('[data-code]').forEach(b=>b.onclick=()=>task(b,async()=>{if(!confirm('입장 코드를 새로 발급할까요? 기존 코드는 사용할 수 없으며 학생은 다시 입장해야 합니다.'))return;const code=await checked(client.rpc('writing_reset_student',{student_key:b.dataset.code,disable:false}));showCode(students.find(s=>s.id===b.dataset.code),code);await loadClass();}));
- $('roster').querySelectorAll('[data-disable]').forEach(b=>b.onclick=()=>task(b,async()=>{if(!confirm('이 학생의 입장을 중지할까요? 기존 제출물은 유지됩니다.'))return;await checked(client.rpc('writing_reset_student',{student_key:b.dataset.disable,disable:true}));await loadClass();status('학생 입장을 중지했습니다.');}));
+ $('roster').innerHTML=students.length?`<table><thead><tr><th>번호·이름</th><th>제출</th><th>입장 관리</th></tr></thead><tbody>${students.map(s=>`<tr><td><b>${s.number}번 ${e(s.name)}</b><small>로그인 이름: ${e(s.login_name||'이전 코드 방식')}</small>${s.active?'':'<small>입장 중지</small>'}</td><td>${submissions.filter(w=>w.student_id===s.id).length}건</td><td><button data-edit="${s.id}">정보 수정</button><button data-active="${s.id}" data-enabled="${!s.active}">${s.active?'입장 중지':'입장 재개'}</button></td></tr>`).join('')}</tbody></table>`:'<p class="empty">학생에게 학급 코드를 알려 주세요. 학생이 가입하면 명단에 자동 등록됩니다.</p>';
+ $('roster').querySelectorAll('[data-active]').forEach(b=>b.onclick=()=>task(b,async()=>{const enabled=b.dataset.enabled==='true';if(!confirm(enabled?'이 학생의 입장을 다시 허용할까요?':'이 학생의 입장을 중지할까요? 기존 제출물은 유지됩니다.'))return;await checked(client.rpc('writing_set_student_active',{student_key:b.dataset.active,enabled}));await loadClass();status(enabled?'학생 입장을 다시 허용했습니다.':'학생 입장을 중지했습니다.');}));
  
  $('roster').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{editingStudent=students.find(s=>s.id===b.dataset.edit);$('editNumber').value=editingStudent.number;$('editName').value=editingStudent.name;$('editStatus').textContent='';$('editStudentDialog').showModal();});
  drawSubmissions();
 }
-function showCode(s,code){const box=$('issuedCode');box.hidden=false;box.innerHTML=`<b>${s.number}번 ${e(s.name)} · 개인 입장 코드</b><code>${e(code)}</code><p>이 코드는 지금 한 번만 표시됩니다. 학생에게 개인적으로 전달하고 보관해 주세요.</p><button id="copyCode">코드 복사</button>`;$('copyCode').onclick=()=>task($('copyCode'),async()=>{await navigator.clipboard.writeText(`학급 코드: ${selectedClass.code}\n학생 입장 코드: ${code}`);status('코드를 복사했습니다.');});}
 function drawSubmissions(){const filter=$('filter').value,query=$('search').value.trim().toLowerCase();const rows=submissions.filter(w=>(filter==='all'||(filter==='pending'?!w.reviewed_at:!!w.reviewed_at))&&`${w.title} ${w.writing_students.name}`.toLowerCase().includes(query));$('submissions').innerHTML=rows.length?rows.map(w=>`<button class="submission-row" data-review="${w.id}"><span><b>${e(w.title)}</b><small>${w.writing_students.number}번 ${e(w.writing_students.name)} · ${date(w.created_at)} · ${w.paths.length}장</small></span><span class="badge ${w.reviewed_at?'done':''}">${w.reviewed_at?'피드백 완료':'대기'}</span></button>`).join(''):'<p class="empty">표시할 제출물이 없습니다.</p>';$('submissions').querySelectorAll('[data-review]').forEach(b=>b.onclick=()=>task(b,()=>openReview(b.dataset.review)));}
 async function openReview(id){
  const submission=submissions.find(w=>w.id===id);if(!submission)return;reviewId=id;$('reviewTitle').textContent=`${submission.writing_students.name} · ${submission.title}`;$('feedback').value=submission.feedback;$('reviewImages').innerHTML='';$('reviewStatus').textContent='이미지를 불러오는 중…';$('reviewDialog').showModal();
@@ -56,12 +55,14 @@ if(teacher){
  $('teacherLogin').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{assertConfigured();await checked(client.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value}));await initialize();});};
  $('signup').onclick=()=>task($('signup'),async()=>{assertConfigured();if(!$('teacherLogin').reportValidity())return;await checked(client.auth.signUp({email:$('email').value.trim(),password:$('password').value}));status('가입 이메일의 인증 링크를 누른 뒤 로그인해 주세요.');});
  $('createClass').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{const classroom=await checked(client.from('writing_classes').insert({name:$('className').value.trim(),teacher_id:user.id}).select().single());$('className').value='';await loadClasses(classroom.id);});};
- $('addStudent').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{if(!selectedClass)throw new Error('학급을 먼저 만들어 주세요.');const name=$('studentName').value.trim(),number=+$('studentNumber').value;const result=await checked(client.rpc('writing_add_student',{class_key:selectedClass.id,student_name:name,student_number:number}));showCode({name,number},result.code);$('studentName').value='';await loadClass();});};
- $('classSelect').onchange=()=>task(null,async()=>{selectedClass=classes.find(c=>c.id===$('classSelect').value);$('issuedCode').hidden=true;await loadClass()});$('refresh').onclick=()=>task($('refresh'),()=>loadClasses());$('filter').onchange=drawSubmissions;$('search').oninput=drawSubmissions;
+ $('classSelect').onchange=()=>task(null,async()=>{selectedClass=classes.find(c=>c.id===$('classSelect').value);await loadClass()});$('refresh').onclick=()=>task($('refresh'),()=>loadClasses());$('filter').onchange=drawSubmissions;$('search').oninput=drawSubmissions;
  $('closeReview').onclick=()=>{$('reviewDialog').close();reviewId=null};$('reviewDialog').addEventListener('close',()=>{reviewId=null});
  $('feedbackForm').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{const id=reviewId;await checked(client.from('writing_submissions').update({feedback:$('feedback').value,reviewed_at:new Date().toISOString()}).eq('id',id).select('id').single());$('reviewStatus').textContent='학생에게 피드백을 전달했습니다.';await loadClass();});};
 }else{
- $('studentLogin').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{assertConfigured();const {data:{session}}=await client.auth.getSession();if(session&&!session.user.is_anonymous)throw new Error('교사 계정에서 먼저 나가기를 눌러 주세요.');if(!session)await checked(client.auth.signInAnonymously());await checked(client.rpc('writing_join',{class_code:$('joinClass').value.trim().toLowerCase(),student_code:$('joinStudent').value.trim().toLowerCase()}));$('joinStudent').value='';await initialize();});};
+ function switchMode(mode){authMode=mode;const register=mode==='register';$('classCodeField').hidden=!register;$('joinClass').required=register;$('confirmPasswordField').hidden=!register;$('confirmPassword').required=register;$('confirmPassword').value='';$('loginPassword').autocomplete=register?'new-password':'current-password';$('registerMode').setAttribute('aria-pressed',register);$('loginMode').setAttribute('aria-pressed',!register);$('studentAuthSubmit').textContent=register?'가입하고 시작하기':'로그인';$('loginDescription').textContent=register?'이름과 비밀번호를 정하면 다음부터 같은 정보로 들어올 수 있어요.':'처음 정한 이름과 비밀번호로 로그인하세요. 학급 코드는 필요 없어요.';}
+ $('registerMode').onclick=()=>switchMode('register');$('loginMode').onclick=()=>switchMode('login');
+ try{const savedName=localStorage.getItem('ttobak-student-name');if(savedName){$('loginName').value=savedName;authMode='login'}}catch{}switchMode(authMode);
+ $('studentLogin').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{assertConfigured();const {data:{session}}=await client.auth.getSession();if(session&&!session.user.is_anonymous&&await checked(client.rpc('writing_is_teacher')))throw new Error('교사 계정에서 먼저 나가기를 눌러 주세요.');if(authMode==='register'&&$('loginPassword').value!==$('confirmPassword').value)throw new Error('두 비밀번호가 같지 않아요. 다시 확인해 주세요.');const name=$('loginName').value.trim();await studentPasswordAuth(authMode,name,$('loginPassword').value,$('joinClass').value);try{localStorage.setItem('ttobak-student-name',name)}catch{}$('loginPassword').value='';$('confirmPassword').value='';await initialize();});};
  $('photoSubmit').onsubmit=event=>{event.preventDefault();task(event.submitter,async()=>{if(!confirm('선생님께 이름과 연습장 사진을 제출할까요?'))return;status('사진을 제출하고 있어요…');await submitImages(student,$('photoTitle').value,[...$('photoFiles').files]);$('photoSubmit').reset();await loadMine();status('선생님께 제출했어요!');});};$('studentRefresh').onclick=()=>task($('studentRefresh'),async()=>{student=await currentStudent();if(!student){location.reload();return}await loadMine()});
 }
 initialize().catch(error=>status(errorText(error)));

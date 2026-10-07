@@ -1,13 +1,14 @@
 {
   "name": "ttobak-writing",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "dev": "npm run build && node server.cjs",
     "build": "node build.cjs",
-    "check": "node --check app.js && node --check portal.js && node --check cloud-editor.js && node --check cloud-client.js && node --check handwriting-export.js",
+    "check": "node --check app.js && node --check portal.js && node --check cloud-editor.js && node --check cloud-client.js && node --check handwriting-export.js && node --check student-auth.js",
     "test:rls": "node tests/rls.cjs",
-    "test:ui": "node tests/ui.cjs"
+    "test:ui": "node tests/ui.cjs",
+    "test:auth": "node tests/student-account.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

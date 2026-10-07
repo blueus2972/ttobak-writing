@@ -6,9 +6,9 @@ export function assertConfigured(){if(!client)throw new Error('Supabase 연결�
 export async function checked(request){const result=await request;if(result.error)throw result.error;return result.data;}
 export async function currentStudent(){
  assertConfigured();const {data:{user}}=await client.auth.getUser();if(!user)return null;
- const membership=await checked(client.from('writing_memberships').select('student_id').eq('user_id',user.id).maybeSingle());
- if(!membership)return null;
- const student=await checked(client.from('writing_students').select('*').eq('id',membership.student_id).single());
+ const studentId=await checked(client.rpc('writing_my_student'));
+ if(!studentId)return null;
+ const student=await checked(client.from('writing_students').select('*').eq('id',studentId).single());
  const classroom=await checked(client.from('writing_classes').select('id,name,code').eq('id',student.class_id).single());
  return {...student,classroom,userId:user.id};
 }
