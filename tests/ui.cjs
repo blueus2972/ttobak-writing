@@ -14,11 +14,13 @@ const {JSDOM}=require('jsdom');const esbuild=require('esbuild');const fs=require
  if(name==='writing_join')return{data:{}};
  throw new Error(name);
  }};
- const create=filename=>{const dom=new JSDOM(fs.readFileSync(filename,'utf8'),{url:'http://localhost/',runScripts:'outside-only'});dom.window.confirm=()=>true;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'))};dom.window.TEST={client,student:null,submit:async()=>{}};return dom;};
+ const create=filename=>{const dom=new JSDOM(fs.readFileSync(filename,'utf8'),{url:'http://localhost/?view=submissions',runScripts:'outside-only'});dom.window.confirm=()=>true;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new dom.window.Event('close'))};dom.window.TEST={client,student:null,submit:async()=>{}};return dom;};
  const settle=async()=>{for(let i=0;i<10;i++)await new Promise(resolve=>setImmediate(resolve));};
  const teacher=create('teacher.html');teacher.window.eval(bundle.outputFiles[0].text);await settle();const doc=teacher.window.document;
- assert.equal(doc.getElementById('dashboard').hidden,false);assert.match(doc.getElementById('roster').textContent,/첫 학생/);assert.equal(doc.getElementById('pendingCount').textContent,'1');
+ assert.equal(doc.getElementById('dashboard').hidden,false);assert.doesNotMatch(doc.getElementById('roster').textContent,/1번/);assert.match(doc.getElementById('roster').textContent,/첫 학생/);assert.equal(doc.getElementById('pendingCount').textContent,'1');
  function formSubmit(dom,id){const form=dom.window.document.getElementById(id);form.dispatchEvent(new dom.window.SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:form.querySelector('button')}));}
+ doc.getElementById('practiceText').value='오늘도 또박또박';formSubmit(teacher,'practiceForm');await settle();assert.equal(state.writing_classes[0].practice_text,'오늘도 또박또박');
+ doc.getElementById('practiceText').value='';formSubmit(teacher,'practiceForm');await settle();assert.equal(state.writing_classes[0].practice_text,'');
  assert.match(doc.getElementById('roster').textContent,/로그인 이름: 첫 학생/);
  doc.querySelector('[data-edit="student1"]').click();doc.getElementById('editName').value='수정 학생';formSubmit(teacher,'editStudentForm');await settle();assert.match(doc.getElementById('roster').textContent,/수정 학생/);
  doc.querySelector('[data-review="work1"]').click();await settle();assert.equal(doc.getElementById('reviewDialog').open,true);assert.equal(doc.querySelectorAll('#reviewImages img').length,1);

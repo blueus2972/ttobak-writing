@@ -9,7 +9,7 @@ export async function currentStudent(){
  const studentId=await checked(client.rpc('writing_my_student'));
  if(!studentId)return null;
  const student=await checked(client.from('writing_students').select('*').eq('id',studentId).single());
- const classroom=await checked(client.from('writing_classes').select('id,name,code').eq('id',student.class_id).single());
+ const classroom=await checked(client.from('writing_classes').select('id,name,code,practice_text,practice_title').eq('id',student.class_id).single());
  return {...student,classroom,userId:user.id};
 }
 export async function submitImages(student,title,images){
