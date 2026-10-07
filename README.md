@@ -15,7 +15,7 @@
 1. Vercel에서 Add New → Project를 선택합니다.
 2. 이 GitHub 저장소를 Import합니다.
 3. Framework Preset: Other, Root Directory: ./
-4. Build Command는 비워 두고 Output Directory: . (또는 기본값)을 사용합니다.
+4. Build Command: npm run build, Output Directory: dist를 사용합니다. vercel.json에 이 설정이 포함되어 있습니다.
 5. Deploy를 누릅니다. 환경 변수와 별도 서버가 필요하지 않습니다.
 
 ## 로컬 실행
@@ -27,3 +27,4 @@ Node.js 설치 후 `npm run dev`로 실행하고 http://localhost:5173 을 엽�
 설정만 로컬 저장되며 이미지와 펜 입력은 새로고침 후 유지되지 않습니다. 서체는 Google Fonts에서 제공되며 인터넷 연결이 없으면 기기 기본 서체를 사용합니다. 자동 맞춤법 교정은 포함하지 않습니다.
 
 참고 사이트의 코드를 복제하지 않고 기능을 참고해 별도로 구현했습니다.
+
