@@ -1,1 +1,20 @@
-{"name":"ttobak-writing","version":"1.0.1","private":true,"scripts":{"dev":"node server.cjs","build":"node build.cjs","check":"node --check app.js"}}
+{
+  "name": "ttobak-writing",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run build && node server.cjs",
+    "build": "node build.cjs",
+    "check": "node --check app.js && node --check portal.js && node --check cloud-editor.js && node --check cloud-client.js && node --check handwriting-export.js",
+    "test:rls": "node tests/rls.cjs",
+    "test:ui": "node tests/ui.cjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
+    "esbuild": "^0.28.2"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "jsdom": "^29.1.1"
+  }
+}

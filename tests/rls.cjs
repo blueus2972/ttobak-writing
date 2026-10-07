@@ -1,0 +1,67 @@
+// Postgres-compatible local RLS tests. Auth/Storage and pgcrypto are fixtures only.
+// Cryptographic primitives below are NOT shipped to production.
+const {PGlite}=require('@electric-sql/pglite');
+const fs=require('node:fs');
+const assert=require('node:assert/strict');
+(async()=>{
+ const db=new PGlite();
+ await db.exec(`create role anon; create role authenticated; create schema auth; create schema storage; create schema extensions;
+ create table auth.users(id uuid primary key);
+ create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.uid',true),'')::uuid $$;
+ create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt',true),''),'{}')::jsonb $$;
+ grant usage on schema auth,storage,extensions to anon,authenticated;
+ grant execute on function auth.uid(),auth.jwt() to anon,authenticated;
+ create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+ create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text unique,owner_id text);
+ alter table storage.objects enable row level security;
+ grant select,insert,delete on storage.objects to authenticated;
+ create function extensions.gen_random_bytes(n integer) returns bytea language sql as $$ select decode(left(replace(gen_random_uuid()::text,'-',''),n*2),'hex') $$;
+ create function extensions.digest(value text,algorithm text) returns bytea language sql as $$ select decode(md5(value),'hex') $$;`);
+ const schema=fs.readFileSync('supabase/schema.sql','utf8').replace('create extension if not exists pgcrypto with schema extensions;','');
+ await db.exec(schema);
+ const teacher1='00000000-0000-4000-8000-000000000001',teacher2='00000000-0000-4000-8000-000000000002',pupil1='00000000-0000-4000-8000-000000000003',pupil2='00000000-0000-4000-8000-000000000004',intruder='00000000-0000-4000-8000-000000000005';
+ for(const id of [teacher1,teacher2,pupil1,pupil2,intruder])await db.query('insert into auth.users values($1)',[id]);
+ await db.exec("insert into ttobak_private.teacher_allowlist values('teacher1@example.com'),('teacher2@example.com');");
+ async function as(id,email='',anonymous=false){await db.exec('reset role');await db.query("select set_config('request.uid',$1,false),set_config('request.jwt',$2,false)",[id,JSON.stringify({email,is_anonymous:anonymous})]);await db.exec('set role authenticated');}
+ async function denied(operation){let rejected=false;try{await operation()}catch{rejected=true}assert.equal(rejected,true,'Operation should be denied');}
+ await as(teacher1,'teacher1@example.com');
+ const c1=(await db.query("insert into public.writing_classes(teacher_id,name) values($1,'6-1') returning *",[teacher1])).rows[0];
+ const s1=(await db.query("select public.writing_add_student($1,'가 학생',1) as result",[c1.id])).rows[0].result;
+ const s2=(await db.query("select public.writing_add_student($1,'나 학생',2) as result",[c1.id])).rows[0].result;
+ await as(teacher2,'teacher2@example.com');
+ const c2=(await db.query("insert into public.writing_classes(teacher_id,name) values($1,'6-2') returning *",[teacher2])).rows[0];
+ assert.equal((await db.query('select * from public.writing_students')).rows.length,0,'Teacher cannot see other class roster');
+ await denied(()=>db.query("select public.writing_add_student($1,'침입',3)",[c1.id]));
+ await as(intruder,'unknown@example.com');await denied(()=>db.query("insert into public.writing_classes(teacher_id,name) values($1,'Unapproved')",[intruder]));
+ await as(pupil1,'',true);
+ await denied(()=>db.query('select public.writing_join($1,$2)',[c1.code,'00000000000000000000000000000000']));
+ await db.query('select public.writing_join($1,$2)',[c1.code,s1.code]);
+ assert.equal((await db.query('select * from public.writing_students')).rows.length,1,'Student only sees own roster entry');
+ assert.equal((await db.query('select * from public.writing_classes')).rows[0].id,c1.id);
+ await denied(()=>db.query("insert into public.writing_classes(teacher_id,name) values($1,'Forged')",[pupil1]));
+ await denied(()=>db.query('select code_hash from ttobak_private.student_codes'));
+ const path1=`${c1.id}/${s1.id}/${pupil1}/batch/1.png`;
+ await db.query('insert into storage.objects(bucket_id,name,owner_id) values($1,$2,$3)',['writing-submissions',path1,pupil1]);
+ await denied(()=>db.query('insert into storage.objects(bucket_id,name,owner_id) values($1,$2,$3)',['writing-submissions',`${c1.id}/${s2.id}/${pupil1}/batch/forged.png`,pupil1]));
+ const work=(await db.query('select public.writing_submit($1,$2,$3) as id',[s1.id,'연습',[path1]])).rows[0].id;
+ await denied(()=>db.query('select public.writing_submit($1,$2,$3)',[s2.id,'다른 학생',[path1]]));
+ await denied(()=>db.query('select public.writing_submit($1,$2,$3)',[s1.id,'중복',[path1]]));
+ await denied(()=>db.query("update public.writing_submissions set paths=array['forged'] where id=$1",[work]));
+ assert.equal((await db.query("update public.writing_submissions set feedback='forged' where id=$1 returning id",[work])).rows.length,0,'Student cannot write teacher feedback');
+ assert.equal((await db.query('delete from storage.objects where name=$1 returning name',[path1])).rows.length,0,'Student cannot remove committed images');
+ await as(pupil2,'',true);await db.query('select public.writing_join($1,$2)',[c1.code,s2.code]);
+ assert.equal((await db.query('select * from public.writing_submissions')).rows.length,0,'Other student cannot see work');
+ assert.equal((await db.query('select * from storage.objects')).rows.length,0,'Other student cannot read images');
+ await as(teacher2,'teacher2@example.com');assert.equal((await db.query('select * from public.writing_submissions')).rows.length,0);assert.equal((await db.query('select * from storage.objects')).rows.length,0);
+ await as(teacher1,'teacher1@example.com');assert.equal((await db.query('select * from storage.objects')).rows.length,1);
+ assert.equal((await db.query("update public.writing_submissions set feedback='잘 썼어요',reviewed_at=now() where id=$1 returning id",[work])).rows.length,1);
+ await as(pupil1,'',true);assert.equal((await db.query('select feedback from public.writing_submissions')).rows[0].feedback,'잘 썼어요');
+ const orphan=`${c1.id}/${s1.id}/${pupil1}/batch/unsubmitted.png`;await db.query('insert into storage.objects(bucket_id,name,owner_id) values($1,$2,$3)',['writing-submissions',orphan,pupil1]);assert.equal((await db.query('delete from storage.objects where name=$1 returning name',[orphan])).rows.length,1,'Unsubmitted uploads can be cleaned up');
+ await as(teacher1,'teacher1@example.com');const newCode=(await db.query('select public.writing_reset_student($1,false) as code',[s1.id])).rows[0].code;
+ await as(pupil1,'',true);assert.equal((await db.query('select * from public.writing_submissions')).rows.length,0,'Reset revokes existing sessions');assert.equal((await db.query('select * from storage.objects')).rows.length,0);
+ await denied(()=>db.query('select public.writing_join($1,$2)',[c1.code,s1.code]));await db.query('select public.writing_join($1,$2)',[c1.code,newCode]);assert.equal((await db.query('select * from public.writing_submissions')).rows.length,1);
+ await as(teacher1,'teacher1@example.com');await db.query('select public.writing_reset_student($1,true)',[s1.id]);
+ await as(pupil1,'',true);assert.equal((await db.query('select * from public.writing_submissions')).rows.length,0);
+ await db.exec('reset role;set role anon;');await denied(()=>db.query('select * from public.writing_students'));await denied(()=>db.query('select public.writing_join($1,$2)',[c1.code,newCode]));
+ await db.close();console.log('PASS: schema compiles; teacher isolation, student isolation, uploads, submission ownership, feedback, cleanup, code reset and deactivation.');
+})().catch(error=>{console.error(error);process.exitCode=1});
